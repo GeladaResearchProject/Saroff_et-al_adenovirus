@@ -1,0 +1,270 @@
+
+
+# load packages
+library(dplyr)
+library(ggplot2)
+library(lmerTest)
+library(stringr)
+library(ggbeeswarm)
+library(reshape2)
+library(ggExtra)
+library(broom.mixed)
+library(lubridate)
+library(tidyselect)
+library(ggpubr)
+library(glmmTMB)
+library(performance)
+
+# read data
+adeno_meta_10.1 = read.csv("Mapping.csv")
+adeno_meta_10.1 = adeno_meta_10.1[(!(adeno_meta_10.1$X.ID == "")),] # remove blanks
+
+# add _ to LID file to match with meta file
+adeno_meta_10.1$LID = sub("(.{3})(.*)", "\\1_\\2", adeno_meta_10.1$LID) # capture the first 5 characters as a group ((.{5})) followed by one or more characters in another capture group ((.*)) and then replace with the backreference of first group (\\1) followed by a . followed by second backreference (\\2).
+
+# name the strains
+adeno_meta_10.1$Covered_percent = as.numeric(adeno_meta_10.1$Covered_percent)
+adeno_meta_10.1$adv1 = ifelse(adeno_meta_10.1$X.ID == "1_LID_105965_147_length_32612_cov_57.813084" & adeno_meta_10.1$Covered_percent >9, 1, 0)
+adeno_meta_10.1$adv2 = ifelse(adeno_meta_10.1$X.ID == "2_LID_108406_319_length_33793_cov_3042.057049" & adeno_meta_10.1$Covered_percent >9, 1, 0)
+adeno_meta_10.1$adv3 = ifelse(adeno_meta_10.1$X.ID == "3_LID_108304_5458_2674_1100_9120_632_updated" & adeno_meta_10.1$Covered_percent >9, 1, 0)
+adeno_meta_10.1$adv4 = ifelse(adeno_meta_10.1$X.ID == "4_LID_107882_345_length_34311_cov_8.59512" & adeno_meta_10.1$Covered_percent >9, 1, 0)
+adeno_meta_10.1$adv5 = ifelse(adeno_meta_10.1$X.ID == "5_LID_105867_65_length_34064_cov_12.309771" & adeno_meta_10.1$Covered_percent >9, 1, 0)
+adeno_meta_10.1$adv6 = ifelse(adeno_meta_10.1$X.ID == "6_LID_107883_492_length_34868_cov_56.276093" & adeno_meta_10.1$Covered_percent >9, 1, 0)
+adeno_meta_10.1$adv7 = ifelse(adeno_meta_10.1$X.ID == "7_LID_105984_101_length_34574_cov_32.439343" & adeno_meta_10.1$Covered_percent >9, 1, 0)
+
+# make binary df
+adeno_10 = adeno_meta_10.1 %>% dplyr::select(LID, adv1, adv2, adv3, adv4, adv5, adv6, adv7)
+
+# collapse each samples row
+adeno_10 = adeno_10 %>% group_by(LID) %>%
+    summarise(adv1 = sum(adv1, na.rm = T),
+    adv2 = sum(adv2, na.rm = T), 
+    adv3 = sum(adv3, na.rm = T),
+    adv4 = sum(adv4, na.rm = T), 
+    adv5 = sum(adv5, na.rm = T),
+    adv6 = sum(adv6, na.rm = T), 
+    adv7 = sum(adv7, na.rm = T))
+
+# richness
+adeno_10 = adeno_10 %>%
+rowwise() %>%
+mutate(richness_10 = sum(adv1,adv2, adv3, adv4, adv5, adv6, adv7, na.rm = T))
+
+# bring in metadata
+ad_meta = read.csv("adeno_weaning_data.csv")
+
+# merge
+ad_meta_10 = merge(ad_meta, adeno_10, by = "LID")
+
+#Descriptive stats
+
+length(unique(ad_meta_10$LID)) #248 samples
+length(unique(ad_meta_10$Individual)) #43 individuals
+
+# new column for if a sample has any adenovirus
+ad_meta_10$any_adeno_10 = ifelse(ad_meta_10$richness_10 >0, 1, 0)
+
+table(ad_meta_10$any_adeno_10) # 48 adenovirus positive samples
+
+# ages
+hist(ad_meta_10$AgeMonth)
+hist(ad_meta_10$AgeYear)
+range(ad_meta_10$AgeYear) # 0.005479452 20.452054790
+
+# now descriptive stats
+table(ad_meta_10$any_adeno_10) # 48
+(48/(111+136))*100 # 19.4%
+table(ad_meta_10$richness_10) # only 41 with 1 adeno, 6 with 2 adeno, 1 with 3 adeno, 201 with no adeno 
+
+# make subsetted df with positive samples
+any.ad = ad_meta_10[ad_meta_10$any_adeno_10 == 1,] # this is important 
+any.ad$any_adeno_10 = as.factor(any.ad$any_adeno_10)
+
+#sex
+table(ad_meta_10$Sex) # f 131 # m 117
+
+## plot percentages by under 6 mo, 6 mo to 18 mo (weaning), weaning to 5 years
+ad_meta_10$explore_cat = ifelse(ad_meta_10$AgeMonth <6, "<6 mo",
+                                ifelse(ad_meta_10$AgeMonth >=6 & ad_meta_10$AgeMonth <=30, "6 mo - 2.5 years", 
+                                       ifelse(ad_meta_10$AgeMonth >30 & ad_meta_10$AgeMonth <=60, "2.5 - 5 years ", ">5 years")))
+                                       
+# calculate percentages
+percent_data_6mo = ad_meta_10 %>%
+  group_by(explore_cat, Sex) %>%
+  summarise(positive_percentage = mean(any_adeno_10) * 100) %>%
+  ungroup()
+
+# Reorder the 6mo factor
+percent_data_6mo$explore_cat = factor(percent_data_6mo$explore_cat,
+                                         levels = c("<6 mo", "6 mo - 2.5 years", "2.5 - 5 years ", ">5 years"))
+
+# plot percentages by 6 mo category
+ggplot(percent_data_6mo, aes(x = explore_cat, y = positive_percentage, fill = Sex)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  scale_fill_manual(values = c("M" = "dodgerblue3", "F" = "aquamarine3"), labels = c("M" = "male", "F" = "female"), name = NULL ) + 
+  labs(
+    title = "", x = "",
+    y = "Adenovirus positive (%)",
+  ) +
+  theme_classic(base_size = 25) + theme(
+    legend.position = c(0.95, 0.95),  # Position in top-right corner inside plot
+    legend.justification = c("right", "top"))  # Anchor the legend at its top-right
+    
+# units 
+table(ad_meta_10$Unit) # C3 C5  D D1 D2 J1  K M1 M2 T1 Te  V Z3 Z5 
+length(unique((ad_meta_10$Unit))) # 14
+
+table(ad_meta_10$explore_cat, ad_meta_10$any_adeno_10, ad_meta_10$Sex)
+table(ad_meta_10$explore_cat, ad_meta_10$any_adeno_10)
+
+# get sample numbers
+summary = ad_meta_10 %>%
+  group_by(explore_cat) %>%
+  summarise(
+    total_samples = n(),
+    total_female_samples = sum(Sex == "F"),
+    total_male_samples = sum(Sex == "M"),
+    unique_females = n_distinct(Individual[Sex == "F"]),
+    unique_males = n_distinct(Individual[Sex == "M"])
+  )
+
+########################### individual line plots ########################### 
+
+# split by Individual
+split_ind = split(ad_meta_10, ad_meta_10$Individual)
+
+next_ind = lapply(split_ind, function(x) {
+  x$seq = 1:nrow(x)
+  return (x)
+})
+
+next_ind = do.call(rbind, next_ind)
+
+# bin samples by age
+next_ind$bin.age = round(next_ind$AgeMonth)
+
+####### plot any adenovirus (0/1) by sample by individual ####### 
+
+# plot all samples from all individuals (adult and non-adult) 
+p_all = ggplot(next_ind,aes(x=bin.age, y=Individual, color=factor(any_adeno_10)))   + scale_color_manual(values = c("grey88", "dodgerblue3"))+ geom_line(color = "grey88")  + theme_classic() + ggtitle("Any Adenovirus") + theme(legend.position = "none", text = element_text(size = 20)) + xlab("Age in Months")+ geom_point(size = 3) 
+q_all = ggMarginal(p_all, type = "densigram", xparams = list(binwidth = 1),groupColour = T, groupFill = T)
+
+# plot non-adults only
+# first subset to nonadults
+next_ind_inf = next_ind[(!(next_ind$age.cat.3 == "adult")),]
+
+# plot
+p_inf_any = ggplot(next_ind_inf,aes(x=bin.age, y=Individual, color=factor(any_adeno_10)))   + scale_color_manual(values = c("grey88", "dodgerblue3"))+ geom_line(color = "grey88")  + theme_classic() + ggtitle("Any Adenovirus") + theme(legend.position = "none", text = element_text(size = 20)) + xlab("Age in Months")+ geom_point(size = 3) 
+q_inf_any = ggMarginal(p_inf_any, type = "densigram", xparams = list(binwidth = 1),groupColour = T, groupFill = T)
+
+# plot adults only
+# first subset to adults
+next_adult_inf = next_ind[(next_ind$age.cat.3 == "adult"),]
+
+# plot
+p_adult_any = ggplot(next_adult_inf,aes(x=bin.age, y=Individual, color=factor(any_adeno_10)))   + scale_color_manual(values = c("grey88", "dodgerblue3"))+ geom_line(color = "grey88")  + theme_classic() + ggtitle("Any Adenovirus") + theme(legend.position = "none", text = element_text(size = 20)) + xlab("Age in Months")+ geom_point(size = 3) 
+q_adult_any = ggMarginal(p_adult_any, type = "densigram", xparams = list(binwidth = 1),groupColour = T, groupFill = T)
+
+
+####### plot adenovirus richness by sample by individual ####### 
+
+# plot all non-adults 
+p_infant_richness = ggplot(next_ind_inf,aes(x=bin.age, y=Individual, color=factor(richness_10))) + scale_color_manual(values = c("grey88", "lightblue3", "dodgerblue4", "black")) + geom_line(color = "grey88")  + theme_classic() + ggtitle("Adenovirus richness") + theme(text = element_text(size = 20)) + xlab("Age in Months")+ geom_point(size = 3) + labs(color = "richness")
+q_infant_richness = ggMarginal(p_infant_richness, type = "densigram", xparams = list(binwidth = 1),groupColour = T, groupFill = T) 
+
+# plot all individuals
+p_all_richness = ggplot(next_ind,aes(x=bin.age, y=Individual, color=factor(richness_10)))   + scale_color_manual(values = c("grey88", "lightblue3", "dodgerblue4", "black")) + geom_line(color = "grey88")  + theme_classic() + ggtitle("Adenovirus strain richness") + theme(text = element_text(size = 20)) + xlab("Age in Months")+ geom_point(size = 3) + labs(title = "richness")
+q_all_richness = ggMarginal(p_all_richness, type = "densigram", xparams = list(binwidth = 1),groupColour = T, groupFill = T)
+
+# plot adults only
+# first subset
+next_ind_adult = next_ind[next_ind$age.cat.3 == "adult",]
+
+p_adult_richness = ggplot(next_ind_adult,aes(x=bin.age, y=Individual, color=factor(richness_10)))   + scale_color_manual(values = c("grey88", "lightblue3", "dodgerblue4", "black")) + geom_line(color = "grey88")  + theme_classic() + ggtitle("Adenovirus richness") + theme(text = element_text(size = 20)) + xlab("Age in Months")+ geom_point(size = 3) + labs(color = "richness")
+q_adult_richness = ggMarginal(p_adult_richness, type = "densigram", xparams = list(binwidth = 1),groupColour = T, groupFill = T)
+
+########################### rainfall plots ########################### 
+# make a new column that has text values for plotting
+ad_meta_10$plot_ad = ifelse(ad_meta_10$any_adeno_10 == 1, "Adenovirus", "No Adenovirus")
+
+# plot rainfall 90
+ggplot(ad_meta_10,aes(x= plot_ad,y=Rain90))+
+  xlab("CrAssphage presence")+ylab("Rainfall (90 days)") +
+  theme_classic() + theme(axis.text.x=element_text(size=rel(1))) + theme(text = element_text(size=30)) + labs(fill = "") + theme(axis.title.x = element_blank()) + ggbeeswarm::geom_quasirandom(aes(color = plot_ad), cex = 2) +
+  geom_boxplot(width = 0.1, alpha = 0.3, fatten = 3, fill = "lightgrey") +
+  scale_color_manual(values = c("darkorange2", "dodgerblue3"))  + theme(legend.position = "none")
+
+# plot rainfall 30
+ggplot(ad_meta_10,aes(x= plot_ad,y=Rain30))+
+  xlab("CrAssphage presence")+ylab("Rainfall (30 days)") +
+  theme_classic() + theme(axis.text.x=element_text(size=rel(1))) + theme(text = element_text(size=30)) + labs(fill = "") + theme(axis.title.x = element_blank()) + ggbeeswarm::geom_quasirandom(aes(color = plot_ad), cex = 2) +
+  geom_boxplot(width = 0.1, alpha = 0.3, fatten = 3, fill = "lightgrey") +
+  scale_color_manual(values = c("darkorange2", "dodgerblue3"))  + theme(legend.position = "none")
+
+# plot temperature
+ggplot(ad_meta_10,aes(x= plot_ad,y=MinT30))+
+  xlab("CrAssphage presence")+ylab("Min Temp (30 days)") +
+  theme_classic() + theme(axis.text.x=element_text(size=rel(1))) + theme(text = element_text(size=30)) + labs(fill = "") + theme(axis.title.x = element_blank()) + ggbeeswarm::geom_quasirandom(aes(color = plot_ad), cex = 2) +
+  geom_boxplot(width = 0.1, alpha = 0.3, fatten = 3, fill = "lightgrey") +
+  scale_color_manual(values = c("darkorange2", "dodgerblue3"))  + theme(legend.position = "none")
+
+# plot temperature
+ggplot(ad_meta_10,aes(x= plot_ad,y=MaxT30))+
+  xlab("CrAssphage presence")+ylab("Max Temp (30 days)") +
+  theme_classic() + theme(axis.text.x=element_text(size=rel(1))) + theme(text = element_text(size=30)) + labs(fill = "") + theme(axis.title.x = element_blank()) + ggbeeswarm::geom_quasirandom(aes(color = plot_ad), cex = 2) +
+  geom_boxplot(width = 0.1, alpha = 0.3, fatten = 3, fill = "lightgrey") +
+  scale_color_manual(values = c("darkorange2", "dodgerblue3"))  + theme(legend.position = "none")
+
+# bin minimum temperature
+ad_meta_10 = ad_meta_10 %>%
+  mutate(temp_bin = case_when(
+    MinT30 <= quantile(MinT30, 1/3, na.rm = TRUE) ~ "Low",
+    MinT30 <= quantile(MinT30, 2/3, na.rm = TRUE) ~ "Medium",
+    TRUE ~ "High"
+  )) %>%
+  mutate(temp_bin = factor(temp_bin, levels = c("Low", "Medium", "High")))
+
+# get ranges
+quantile_ranges = quantile(ad_meta_10$MinT30, probs = c(0, 1/3, 2/3, 1), na.rm = TRUE)
+category_ranges = data.frame(
+  Category = c("Low", "Medium", "High"),
+  Min = c(quantile_ranges[1], quantile_ranges[2], quantile_ranges[3]),
+  Max = c(quantile_ranges[2], quantile_ranges[3], quantile_ranges[4])
+)
+
+# Plot violin
+ggplot(ad_meta_10, aes(x = temp_bin, y = richness_10, fill = temp_bin)) +
+  geom_violin(trim = FALSE, alpha = 0.5) +
+  geom_boxplot(width = 0.1, outlier.shape = NA) + geom_jitter(width = 0.1, size = 1.5, alpha = 0.6) +
+  labs(x = "Minimum 30 day temperature", y = "Adenovirus Richness") +
+  theme_classic() +
+  theme(legend.position = "none", text = element_text(size=30), axis.title.x = element_text(margin = margin(t = 20)))
+
+######################################## 
+########### 0/1 model ########### 
+######################################## 
+
+# model any adeno (0/1) per sample
+# These approaches apply regularization, which can stabilize parameter estimates and improve convergence.
+# defining Gamma priors to avoid singular fit
+prior <- data.frame(
+  prior = "gamma(1, 2.5)",  # mean can be 1, but even 1e8
+  class = "ranef"           # for random effects
+)
+
+# model
+model_all = glmmTMB(any_adeno_10 ~   Sex + explore_cat  + scale(Rain90) + MinT30+ log(NbReads) + band + 
+                       (1|Individual), data = ad_meta_10, family = binomial(link = "logit"))
+model_all_prior = update(model_all, priors = prior)
+summary(model_all_prior)
+
+######################################## 
+########### Richness model ########### 
+######################################## 
+
+model_all_rich = glmmTMB(richness_10 ~   Sex + explore_cat + scale(Rain90) + MinT30  + log(NbReads) + band +
+                       (1|Individual), data = ad_meta_10)
+
+model_all_rich_p <- update(model_all_rich, priors = prior)
+summary(model_all_rich_p)
+
