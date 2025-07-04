@@ -1,6 +1,11 @@
+---
+title: "Adenovirus_github_Jun_23_2025"
+output: html_notebook
+---
 
+This nb uses a file generated from data_analysis_204_dec.Rmd. Post merging and adding in weaning data, and brings in the new results with 10% threshold.
 
-# load packages
+```{r}
 library(dplyr)
 library(ggplot2)
 library(lmerTest)
@@ -8,15 +13,18 @@ library(stringr)
 library(ggbeeswarm)
 library(reshape2)
 library(ggExtra)
+library(ggeffects)
 library(broom.mixed)
 library(lubridate)
 library(tidyselect)
 library(ggpubr)
 library(glmmTMB)
 library(performance)
+```
 
+```{r}
 # read data
-adeno_meta_10.1 = read.csv("Mapping.csv")
+adeno_meta_10.1 = read.csv("~/Desktop/Virome/Mapping.csv")
 adeno_meta_10.1 = adeno_meta_10.1[(!(adeno_meta_10.1$X.ID == "")),] # remove blanks
 
 # add _ to LID file to match with meta file
@@ -51,13 +59,17 @@ rowwise() %>%
 mutate(richness_10 = sum(adv1,adv2, adv3, adv4, adv5, adv6, adv7, na.rm = T))
 
 # bring in metadata
-ad_meta = read.csv("adeno_weaning_data.csv")
+ad_meta = read.csv("~/Desktop/Virome/adeno_weaning_data.csv")
 
 # merge
 ad_meta_10 = merge(ad_meta, adeno_10, by = "LID")
 
-#Descriptive stats
+```
 
+Descriptive stats
+
+```{r}
+# descriptive stats
 length(unique(ad_meta_10$LID)) #248 samples
 length(unique(ad_meta_10$Individual)) #43 individuals
 
@@ -128,6 +140,33 @@ summary = ad_meta_10 %>%
     unique_males = n_distinct(Individual[Sex == "M"])
   )
 
+# how many changed explore_cat
+inds_with_change = ad_meta_10 %>%
+  group_by(Individual) %>%
+  summarize(n_unique_explore_cat = n_distinct(explore_cat)) %>%
+  filter(n_unique_explore_cat > 1)
+
+# Count 
+nrow(inds_with_change) # 21
+
+#  changes in explore_cat 
+explore_cat_changes = ad_meta_10 %>%
+  arrange(Individual, AgeDay) %>%  
+  group_by(Individual) %>%
+  mutate(
+    prev_cat = lag(explore_cat),
+    changed = explore_cat != prev_cat
+  ) %>%
+  filter(!is.na(prev_cat) & changed) %>%
+  select(Individual, prev_cat, explore_cat)
+
+summary_changes = explore_cat_changes %>%
+  group_by(Individual) %>%
+  summarize(n_changes = n())
+
+mean(summary_changes$n_changes) # 1.714286
+median(summary_changes$n_changes) # 2
+
 ########################### individual line plots ########################### 
 
 # split by Individual
@@ -145,11 +184,6 @@ next_ind$bin.age = round(next_ind$AgeMonth)
 
 ####### plot any adenovirus (0/1) by sample by individual ####### 
 
-# plot all samples from all individuals (adult and non-adult) 
-p_all = ggplot(next_ind,aes(x=bin.age, y=Individual, color=factor(any_adeno_10)))   + scale_color_manual(values = c("grey88", "dodgerblue3"))+ geom_line(color = "grey88")  + theme_classic() + ggtitle("Any Adenovirus") + theme(legend.position = "none", text = element_text(size = 20)) + xlab("Age in Months")+ geom_point(size = 3) 
-q_all = ggMarginal(p_all, type = "densigram", xparams = list(binwidth = 1),groupColour = T, groupFill = T)
-
-# plot non-adults only
 # first subset to nonadults
 next_ind_inf = next_ind[(!(next_ind$age.cat.3 == "adult")),]
 
@@ -157,114 +191,165 @@ next_ind_inf = next_ind[(!(next_ind$age.cat.3 == "adult")),]
 p_inf_any = ggplot(next_ind_inf,aes(x=bin.age, y=Individual, color=factor(any_adeno_10)))   + scale_color_manual(values = c("grey88", "dodgerblue3"))+ geom_line(color = "grey88")  + theme_classic() + ggtitle("Any Adenovirus") + theme(legend.position = "none", text = element_text(size = 20)) + xlab("Age in Months")+ geom_point(size = 3) 
 q_inf_any = ggMarginal(p_inf_any, type = "densigram", xparams = list(binwidth = 1),groupColour = T, groupFill = T)
 
-# plot adults only
-# first subset to adults
-next_adult_inf = next_ind[(next_ind$age.cat.3 == "adult"),]
-
-# plot
-p_adult_any = ggplot(next_adult_inf,aes(x=bin.age, y=Individual, color=factor(any_adeno_10)))   + scale_color_manual(values = c("grey88", "dodgerblue3"))+ geom_line(color = "grey88")  + theme_classic() + ggtitle("Any Adenovirus") + theme(legend.position = "none", text = element_text(size = 20)) + xlab("Age in Months")+ geom_point(size = 3) 
-q_adult_any = ggMarginal(p_adult_any, type = "densigram", xparams = list(binwidth = 1),groupColour = T, groupFill = T)
-
+# without densigram
+q_inf_any1 = ggMarginal(p_inf_any, type = "histogram", xparams = list(binwidth = 1), groupColour = TRUE, groupFill = TRUE)
 
 ####### plot adenovirus richness by sample by individual ####### 
+next_ind_inf$richness_10 = factor(next_ind_inf$richness_10, 
+                                   levels = c("0", "1", "2", "3"))
 
 # plot all non-adults 
-p_infant_richness = ggplot(next_ind_inf,aes(x=bin.age, y=Individual, color=factor(richness_10))) + scale_color_manual(values = c("grey88", "lightblue3", "dodgerblue4", "black")) + geom_line(color = "grey88")  + theme_classic() + ggtitle("Adenovirus richness") + theme(text = element_text(size = 20)) + xlab("Age in Months")+ geom_point(size = 3) + labs(color = "richness")
-q_infant_richness = ggMarginal(p_infant_richness, type = "densigram", xparams = list(binwidth = 1),groupColour = T, groupFill = T) 
+p_infant_richness = ggplot(next_ind_inf,aes(x=bin.age, y=Individual, color=factor(richness_10))) + scale_color_manual(values = c("grey88", "lightblue3", "dodgerblue4", "black")) + scale_fill_manual(values = c("grey88", "lightblue3", "dodgerblue4", "black"))  + geom_line(color = "grey88")  + theme_classic() + ggtitle("Adenovirus richness") + theme(text = element_text(size = 20)) + xlab("Age in Months")+ geom_point(size = 3) + labs(color = "richness")
+q_infant_richness = ggMarginal(p_infant_richness, type = "densigram", xparams = list(binwidth = 1, alpha = .8),groupColour = T, groupFill = T) 
 
-# plot all individuals
-p_all_richness = ggplot(next_ind,aes(x=bin.age, y=Individual, color=factor(richness_10)))   + scale_color_manual(values = c("grey88", "lightblue3", "dodgerblue4", "black")) + geom_line(color = "grey88")  + theme_classic() + ggtitle("Adenovirus strain richness") + theme(text = element_text(size = 20)) + xlab("Age in Months")+ geom_point(size = 3) + labs(title = "richness")
-q_all_richness = ggMarginal(p_all_richness, type = "densigram", xparams = list(binwidth = 1),groupColour = T, groupFill = T)
+########################### season plots ########################### 
 
-# plot adults only
-# first subset
-next_ind_adult = next_ind[next_ind$age.cat.3 == "adult",]
+# plot predicted values from below models (must run models first)
+library(ggeffects)
+preds = ggpredict(model_all_rich, terms = "MinT30", bias_correction = T)
+plot(preds)
 
-p_adult_richness = ggplot(next_ind_adult,aes(x=bin.age, y=Individual, color=factor(richness_10)))   + scale_color_manual(values = c("grey88", "lightblue3", "dodgerblue4", "black")) + geom_line(color = "grey88")  + theme_classic() + ggtitle("Adenovirus richness") + theme(text = element_text(size = 20)) + xlab("Age in Months")+ geom_point(size = 3) + labs(color = "richness")
-q_adult_richness = ggMarginal(p_adult_richness, type = "densigram", xparams = list(binwidth = 1),groupColour = T, groupFill = T)
+# ggplot it
+ggplot(preds, aes(x = x, y = predicted)) +
+geom_ribbon(aes(ymin = conf.low, ymax = conf.high), fill = "dodgerblue3", alpha = 0.2) +
+  geom_line(color = "Orange", size = 1.2) +
+  geom_jitter(data = ad_meta_10, 
+              aes(x = MinT30, y = richness_10), 
+              inherit.aes = FALSE,
+              width = 0.2, height = 0.1, 
+              alpha = 0.3, color = "gray50") +
+  theme_classic(base_size = 18) +
+  labs(x = "Min 30-Day Temperature",
+       y = "Predicted Adenovirus Richness") +
+  scale_y_continuous(breaks = 0:3, limits = c(0, 3)) +
+  theme(axis.title.x = element_text(margin = margin(t = 15)))
+```
 
-########################### rainfall plots ########################### 
-# make a new column that has text values for plotting
-ad_meta_10$plot_ad = ifelse(ad_meta_10$any_adeno_10 == 1, "Adenovirus", "No Adenovirus")
+Model
 
-# plot rainfall 90
-ggplot(ad_meta_10,aes(x= plot_ad,y=Rain90))+
-  xlab("CrAssphage presence")+ylab("Rainfall (90 days)") +
-  theme_classic() + theme(axis.text.x=element_text(size=rel(1))) + theme(text = element_text(size=30)) + labs(fill = "") + theme(axis.title.x = element_blank()) + ggbeeswarm::geom_quasirandom(aes(color = plot_ad), cex = 2) +
-  geom_boxplot(width = 0.1, alpha = 0.3, fatten = 3, fill = "lightgrey") +
-  scale_color_manual(values = c("darkorange2", "dodgerblue3"))  + theme(legend.position = "none")
-
-# plot rainfall 30
-ggplot(ad_meta_10,aes(x= plot_ad,y=Rain30))+
-  xlab("CrAssphage presence")+ylab("Rainfall (30 days)") +
-  theme_classic() + theme(axis.text.x=element_text(size=rel(1))) + theme(text = element_text(size=30)) + labs(fill = "") + theme(axis.title.x = element_blank()) + ggbeeswarm::geom_quasirandom(aes(color = plot_ad), cex = 2) +
-  geom_boxplot(width = 0.1, alpha = 0.3, fatten = 3, fill = "lightgrey") +
-  scale_color_manual(values = c("darkorange2", "dodgerblue3"))  + theme(legend.position = "none")
-
-# plot temperature
-ggplot(ad_meta_10,aes(x= plot_ad,y=MinT30))+
-  xlab("CrAssphage presence")+ylab("Min Temp (30 days)") +
-  theme_classic() + theme(axis.text.x=element_text(size=rel(1))) + theme(text = element_text(size=30)) + labs(fill = "") + theme(axis.title.x = element_blank()) + ggbeeswarm::geom_quasirandom(aes(color = plot_ad), cex = 2) +
-  geom_boxplot(width = 0.1, alpha = 0.3, fatten = 3, fill = "lightgrey") +
-  scale_color_manual(values = c("darkorange2", "dodgerblue3"))  + theme(legend.position = "none")
-
-# plot temperature
-ggplot(ad_meta_10,aes(x= plot_ad,y=MaxT30))+
-  xlab("CrAssphage presence")+ylab("Max Temp (30 days)") +
-  theme_classic() + theme(axis.text.x=element_text(size=rel(1))) + theme(text = element_text(size=30)) + labs(fill = "") + theme(axis.title.x = element_blank()) + ggbeeswarm::geom_quasirandom(aes(color = plot_ad), cex = 2) +
-  geom_boxplot(width = 0.1, alpha = 0.3, fatten = 3, fill = "lightgrey") +
-  scale_color_manual(values = c("darkorange2", "dodgerblue3"))  + theme(legend.position = "none")
-
-# bin minimum temperature
-ad_meta_10 = ad_meta_10 %>%
-  mutate(temp_bin = case_when(
-    MinT30 <= quantile(MinT30, 1/3, na.rm = TRUE) ~ "Low",
-    MinT30 <= quantile(MinT30, 2/3, na.rm = TRUE) ~ "Medium",
-    TRUE ~ "High"
-  )) %>%
-  mutate(temp_bin = factor(temp_bin, levels = c("Low", "Medium", "High")))
-
-# get ranges
-quantile_ranges = quantile(ad_meta_10$MinT30, probs = c(0, 1/3, 2/3, 1), na.rm = TRUE)
-category_ranges = data.frame(
-  Category = c("Low", "Medium", "High"),
-  Min = c(quantile_ranges[1], quantile_ranges[2], quantile_ranges[3]),
-  Max = c(quantile_ranges[2], quantile_ranges[3], quantile_ranges[4])
-)
-
-# Plot violin
-ggplot(ad_meta_10, aes(x = temp_bin, y = richness_10, fill = temp_bin)) +
-  geom_violin(trim = FALSE, alpha = 0.5) +
-  geom_boxplot(width = 0.1, outlier.shape = NA) + geom_jitter(width = 0.1, size = 1.5, alpha = 0.6) +
-  labs(x = "Minimum 30 day temperature", y = "Adenovirus Richness") +
-  theme_classic() +
-  theme(legend.position = "none", text = element_text(size=30), axis.title.x = element_text(margin = margin(t = 20)))
+```{r}
 
 ######################################## 
 ########### 0/1 model ########### 
 ######################################## 
 
 # model any adeno (0/1) per sample
-# These approaches apply regularization, which can stabilize parameter estimates and improve convergence.
-# defining Gamma priors to avoid singular fit
-prior <- data.frame(
-  prior = "gamma(1, 2.5)",  # mean can be 1, but even 1e8
-  class = "ranef"           # for random effects
-)
-
 # model
 model_all = glmmTMB(any_adeno_10 ~   Sex + explore_cat  + scale(Rain90) + MinT30+ log(NbReads) + band + 
                        (1|Individual), data = ad_meta_10, family = binomial(link = "logit"))
-model_all_prior = update(model_all, priors = prior)
-summary(model_all_prior)
+summary_model = summary(model_all)
+
+# Confidence intervals for log-odds
+ci_log_odds = confint(model_all, parm = "beta_", level = 0.95)
+# Transform to odds ratios
+ci_odds_ratios = exp(ci_log_odds)
+
+# Extract fixed effect estimates (log-odds), standard errors, z-values, and p-values
+estimates = summary_model$coefficients$cond[, "Estimate"]
+std_errors = summary_model$coefficients$cond[, "Std. Error"]
+z_values = summary_model$coefficients$cond[, "z value"]
+p_values = summary_model$coefficients$cond[, "Pr(>|z|)"]
+
+# Compute odds ratios
+odds_ratios = exp(estimates)
+
+# Merge into one data frame
+results = data.frame(
+  Predictor = names(odds_ratios),
+  Estimate = estimates,
+  StdError = std_errors,
+  z_value = z_values,
+  p_value = p_values,
+  OddsRatio = odds_ratios,
+  CI_Lower = ci_odds_ratios[, 1],
+  CI_Upper = ci_odds_ratios[, 2]
+)
+
+# Add inverse odds ratios and their confidence intervals
+results = results %>%
+  mutate(
+    InverseOddsRatio = 1 / OddsRatio,
+    IOR_CI_Lower = 1 / CI_Upper,  # Inverse of the upper bound of OR
+    IOR_CI_Upper = 1 / CI_Lower   # Inverse of the lower bound of OR
+  )
+
+# Round all numeric columns to 3 decimal places
+results = results %>%
+  mutate(across(where(is.numeric), ~ round(., 3)))
+
+## infants only
+ad_meta_10_inf = ad_meta_10[ad_meta_10$explore_cat == "<6 mo" | ad_meta_10$explore_cat == "6 mo - 2.5 years", ]
+model_inf = glmmTMB(any_adeno_10 ~   Sex + poly(AgeDay, 2)  + scale(Rain90) + MinT30+ log(NbReads) + band + 
+                       (1|Individual), data = ad_meta_10_inf, family = binomial(link = "logit"))
 
 ######################################## 
 ########### Richness model ########### 
 ######################################## 
 
-model_all_rich = glmmTMB(richness_10 ~   Sex + explore_cat + scale(Rain90) + MinT30  + log(NbReads) + band +
-                       (1|Individual), data = ad_meta_10)
+model_all_rich = glmmTMB(richness_10 ~ Sex + explore_cat + scale(Rain90) + MinT30 + log(NbReads) + band +
+                          (1|Individual),
+                          data = ad_meta_10,
+                          family = poisson(link = "log"))
 
-model_all_rich_p <- update(model_all_rich, priors = prior)
-summary(model_all_rich_p)
+# Test for overdispersion
+sim_res = simulateResiduals(model_all_rich)
+testDispersion(sim_res)
+
+# Extract summary of fixed effects
+summary_all_rich = summary(model_all_rich)
+
+# Extract coefficients table (fixed effects)
+coef_table = as.data.frame(summary_all_rich$coefficients$cond)
+
+# Rename columns for clarity
+colnames(coef_table) = c("Estimate", "StdError", "z_value", "p_value")
+
+# Add predictor names as a proper column (removing rownames)
+coef_table$Predictor = rownames(coef_table)
+rownames(coef_table) = NULL
+
+# Reorder columns so Predictor is first
+coef_table = coef_table %>%
+  select(Predictor, everything())
+
+# Round numeric columns to 3 decimal places
+coef_table = coef_table %>%
+  mutate(across(where(is.numeric), ~ round(., 3)))
+
+#write.csv(coef_table, "~/Desktop/Virome/richness_results.csv")
+```
+
+
+```{r}
+# Confidence intervals for log-odds
+ci_log_odds = confint(model_all, parm = "beta_", level = 0.95)
+# Transform to odds ratios
+ci_odds_ratios = exp(ci_log_odds)
+
+# Extract fixed effect estimates (log-odds)
+log_odds = fixef(model_all)$cond
+# Compute odds ratios
+odds_ratios = exp(log_odds)
+
+# merge
+results = data.frame(
+  Predictor = names(odds_ratios),
+  OddsRatio = odds_ratios,
+  CI_Lower = ci_odds_ratios[, 1],
+  CI_Upper = ci_odds_ratios[, 2]
+)
+# Add inverse odds ratios and their confidence intervals
+results = results %>%
+  mutate(
+    InverseOddsRatio = 1 / OddsRatio,
+    IOR_CI_Lower = 1 / CI_Upper,  # Inverse of the upper bound of OR
+    IOR_CI_Upper = 1 / CI_Lower  # Inverse of the lower bound of OR
+  )
+
+# Round all numeric columns to 3 decimal places
+results = results %>%
+  mutate(across(where(is.numeric), ~ round(., 3)))
+
+```
+
 
